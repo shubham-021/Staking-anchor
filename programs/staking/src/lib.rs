@@ -102,7 +102,7 @@ pub mod staking {
         let ix = system_instruction::transfer(from, to, reward);
 
         let vault_bump = ctx.bumps.vault;
-        let seeds = &[b"stake".as_ref(),&[vault_bump]];
+        let seeds = &[b"vault".as_ref(),&[vault_bump]];
 
         invoke_signed(&ix, &[
             ctx.accounts.payer.to_account_info(),
@@ -162,7 +162,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = payer,
-        space = 8 + 32 + 8 + 8,
+        space = 8 + 32 + 8 + 8 + 8,
         seeds = [b"stake",payer.key().as_ref()],
         bump
     )]
