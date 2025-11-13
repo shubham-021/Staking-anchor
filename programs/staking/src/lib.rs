@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 
 declare_id!("7tPicSkVBpLMWyHM2mxgaLsXHEFvKKL7fdSJgytZf9kW");
 // pub const ADMIN_PUBKEY: Pubkey = pubkey!("GhfXkds6tpPfxN2gJxzenE2qs1p2hjhV3sppf7m1Ubd8");
-const EPOCH_DURATION: i64 = 86400;
-const REWARD_PER_EPOCH:u64 = 2;
+// const EPOCH_DURATION: i64 = 86400;
+const REWARD_PER_SEC:u64 = 2;
 
 #[program]
 pub mod staking {
@@ -22,23 +22,38 @@ pub mod staking {
         Ok(())
     }
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>,amount:u64) -> Result<()> {
+        let from = ctx.accounts.payer.key;
+        let to =  &ctx.accounts.vault_sol.key();
+        let ix = system_instruction::transfer(from, to, amount);
+
+        invoke(&ix, &[
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.vault_sol.to_account_info(),
+            ctx.accounts.system_program.to_account_info()
+        ])?;
+
         let pda = &mut ctx.accounts.user_stake_acc;
+        let vault = &mut ctx.accounts.vault;
+
         pda.user = ctx.accounts.payer.key();
-        pda.amount = 0;
-        pda.last_epoch = Clock::get()?.unix_timestamp.checked_div(EPOCH_DURATION).unwrap() as u64;
+        pda.amount = amount;
+        vault.total_staked = vault.total_staked.checked_add(amount).unwrap();
+
+        let clock = Clock::get()?;
+        pda.last_time_when_interacted = clock.unix_timestamp as u64;
         pda.pending_reward = 0;
         Ok(())
     }
 
     pub fn stake_sol(ctx: Context<StakeSol>,amount:u64) -> Result<()> {
         let from = ctx.accounts.payer.key;
-        let to =  &ctx.accounts.vault.key();
+        let to =  &ctx.accounts.vault_sol.key();
         let ix = system_instruction::transfer(from, to, amount);
 
         invoke(&ix, &[
             ctx.accounts.payer.to_account_info(),
-            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.vault_sol.to_account_info(),
             ctx.accounts.system_program.to_account_info()
         ])?;
 
@@ -46,14 +61,15 @@ pub mod staking {
         let vault = &mut ctx.accounts.vault;
 
         let clock = Clock::get()?;
-        let current = (clock.unix_timestamp/EPOCH_DURATION) as u64;
+        let current = clock.unix_timestamp as u64;
 
-        let epoch_elapsed = current - stake.last_epoch;
+        let time_elapsed = current - stake.last_time_when_interacted;
 
-        let reward = stake.amount.checked_mul(epoch_elapsed).unwrap().checked_mul(REWARD_PER_EPOCH).unwrap();
+        let reward = stake.amount.checked_mul(time_elapsed).unwrap().checked_mul(REWARD_PER_SEC).unwrap();
 
         stake.pending_reward = stake.pending_reward.checked_add(reward).unwrap();
-        stake.last_epoch = current;
+        stake.last_time_when_interacted = current;
+        stake.amount = stake.amount.checked_add(amount).unwrap();
 
         vault.total_rewards = vault.total_rewards.checked_add(reward).unwrap();
         vault.total_staked = vault.total_staked.checked_add(amount).unwrap();
@@ -63,15 +79,22 @@ pub mod staking {
 
     pub fn unstake_sol(ctx: Context<UnstakeSol>,amount:u64) -> Result<()> {
         require!(ctx.accounts.user_stake_acc.amount >= amount , CustomError::InsufficientBalance);
-        let from = &ctx.accounts.vault.key();
+        let from = &ctx.accounts.vault_sol.key();
         let to =  ctx.accounts.payer.key;
-        let vault_bump = ctx.bumps.vault;
+        let vault_bump = ctx.bumps.vault_sol;
         let ix = system_instruction::transfer(from, to, amount);
-        let seeds = &[b"vault".as_ref(), &[vault_bump]];
+        let seeds = &[b"vault_sol".as_ref(), &[vault_bump]];
+
+
+        // The order of accounts in invoke_signed must match the order in the instruction!
+        // The system_instruction::transfer(from, to, amount) expects accounts in this order:
+        // from (vault)
+        // to (payer)
+        // system_program
 
         invoke_signed(&ix, &[
+            ctx.accounts.vault_sol.to_account_info(),
             ctx.accounts.payer.to_account_info(),
-            ctx.accounts.vault.to_account_info(),
             ctx.accounts.system_program.to_account_info()
         ],&[seeds])?;
 
@@ -79,14 +102,14 @@ pub mod staking {
         let vault = &mut ctx.accounts.vault;
 
         let clock = Clock::get()?;
-        let current = (clock.unix_timestamp/EPOCH_DURATION) as u64;
+        let current = clock.unix_timestamp as u64;
 
-        let epoch_elapsed = current - stake.last_epoch;
+        let time_elapsed = current - stake.last_time_when_interacted;
 
-        let reward = stake.amount.checked_mul(epoch_elapsed).unwrap().checked_mul(REWARD_PER_EPOCH).unwrap();
+        let reward = stake.amount.checked_mul(time_elapsed).unwrap().checked_mul(REWARD_PER_SEC).unwrap();
 
         stake.pending_reward = stake.pending_reward.checked_add(reward).unwrap();
-        stake.last_epoch = current;
+        stake.last_time_when_interacted = current;
         stake.amount = stake.amount.checked_sub(amount).unwrap();
 
         vault.total_rewards = vault.total_rewards.checked_add(reward).unwrap();
@@ -96,17 +119,17 @@ pub mod staking {
     }
 
     pub fn claim_reward(ctx: Context<ClaimReward>) -> Result<()> {
-        let from = &ctx.accounts.vault.key();
+        let from = &ctx.accounts.vault_sol.key();
         let to =  ctx.accounts.payer.key;
         let reward = ctx.accounts.user_stake_acc.pending_reward;
         let ix = system_instruction::transfer(from, to, reward);
 
-        let vault_bump = ctx.bumps.vault;
+        let vault_bump = ctx.bumps.vault_sol;
         let seeds = &[b"vault".as_ref(),&[vault_bump]];
 
         invoke_signed(&ix, &[
             ctx.accounts.payer.to_account_info(),
-            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.vault_sol.to_account_info(),
             ctx.accounts.system_program.to_account_info()
         ],&[seeds])?;
 
@@ -114,10 +137,10 @@ pub mod staking {
         let vault = &mut ctx.accounts.vault;
 
         let clock = Clock::get()?;
-        let current = (clock.unix_timestamp/EPOCH_DURATION) as u64;
+        let current = clock.unix_timestamp as u64;
 
         stake.pending_reward = 0;
-        stake.last_epoch = current;
+        stake.last_time_when_interacted = current;
 
         vault.total_rewards = vault.total_rewards.checked_sub(reward).unwrap();
 
@@ -136,7 +159,7 @@ pub struct VaultAccount {
 pub struct StakeAccount {
     pub user: Pubkey,
     pub amount: u64,
-    pub last_epoch: u64,
+    pub last_time_when_interacted: u64,
     pub pending_reward: u64
 }
 
@@ -152,6 +175,10 @@ pub struct  InitializeVault<'info> {
         bump
     )]
     pub vault: Account<'info,VaultAccount>,
+
+    #[account(mut,seeds = [b"vault_sol"],bump)]
+    pub vault_sol: SystemAccount<'info>,
+
     pub system_program: Program<'info,System>
 }
 
@@ -167,6 +194,13 @@ pub struct Initialize<'info> {
         bump
     )]
     pub user_stake_acc: Account<'info,StakeAccount>,
+
+    #[account(mut,seeds=[b"vault"],bump)]
+    pub vault: Account<'info,VaultAccount>,
+
+    #[account(mut,seeds = [b"vault_sol"],bump)]
+    pub vault_sol: SystemAccount<'info>,
+
     pub system_program: Program<'info,System>
 }
 
@@ -177,6 +211,9 @@ pub struct StakeSol<'info> {
 
     #[account(mut,seeds=[b"stake",payer.key().as_ref()] , bump)]
     pub user_stake_acc: Account<'info,StakeAccount>,
+
+    #[account(mut,seeds = [b"vault_sol"],bump)]
+    pub vault_sol: SystemAccount<'info>,
 
     #[account(mut,seeds=[b"vault"],bump)]
     pub vault: Account<'info,VaultAccount>,
@@ -195,6 +232,9 @@ pub struct UnstakeSol<'info> {
     #[account(mut,seeds=[b"vault"],bump)]
     pub vault: Account<'info,VaultAccount>,
 
+    #[account(mut,seeds = [b"vault_sol"],bump)]
+    pub vault_sol: SystemAccount<'info>,
+
     pub system_program: Program<'info,System>
     
 }
@@ -210,6 +250,9 @@ pub struct ClaimReward<'info> {
 
     #[account(mut,seeds=[b"vault"],bump)]
     pub vault: Account<'info,VaultAccount>,
+
+    #[account(mut,seeds = [b"vault_sol"],bump)]
+    pub vault_sol: SystemAccount<'info>,
 
     pub system_program: Program<'info,System>
     

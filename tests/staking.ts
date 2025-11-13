@@ -37,29 +37,82 @@ describe("staking", () => {
       admin: admin.publicKey
     }).rpc();
 
-    await program.methods.initialize().accounts({
+    await program.methods.initialize(new anchor.BN(5*anchor.web3.LAMPORTS_PER_SOL)).accounts({
       payer: user.publicKey,
     }).signers([user]).rpc();
 
     const vaultAcc = await program.account.vaultAccount.fetch(vaultPda);
     const userAcc = await program.account.stakeAccount.fetch(userAccPda);
 
-    assert.equal(vaultAcc.totalStaked.toNumber(),0);
-    assert.equal(userAcc.amount.toNumber(),0);
+    // console.log(vaultAcc.totalStaked);
+    // console.log(userAcc.amount);
+
+    assert.equal(vaultAcc.totalStaked.toNumber(),5*anchor.web3.LAMPORTS_PER_SOL);
+    assert.equal(userAcc.amount.toNumber(),5*anchor.web3.LAMPORTS_PER_SOL);
   })
 
   it("Should fail when trying to unstake more than staked",async()=>{
     try {
-      await program.methods.unstakeSol(new anchor.BN(1_000_000)).accounts({
+      await program.methods.unstakeSol(new anchor.BN(6*anchor.web3.LAMPORTS_PER_SOL)).accounts({
         payer: user.publicKey
       }).signers([user]).rpc();
 
       assert.ok(false , "Should have thrown error");
     } catch (error:any) {
-      console.log(error);
+      // console.log(error);
       assert.ok(error.toString().includes("InsufficientBalance"));
     }
   })
 
-  it("It successfully stakes given amount",async()=>{})
+  it("It successfully stakes given amount",async()=>{
+    await program.methods.stakeSol(new anchor.BN(2*anchor.web3.LAMPORTS_PER_SOL)).accounts({
+      payer:user.publicKey
+    }).signers([user]).rpc();
+
+    const vaultAcc = await program.account.vaultAccount.fetch(vaultPda);
+    const userAcc = await program.account.stakeAccount.fetch(userAccPda);
+
+    // console.log("Amount staked from vault: ",vaultAcc.totalStaked);
+    // console.log("Amount staked from user: ",userAcc.amount);
+    assert.equal(vaultAcc.totalStaked.toNumber(),7*anchor.web3.LAMPORTS_PER_SOL);
+    assert.equal(userAcc.amount.toNumber(),7*anchor.web3.LAMPORTS_PER_SOL);
+  })
+
+  it("It should successfully unstake given amount",async()=>{
+    await program.methods.unstakeSol(new anchor.BN(2*anchor.web3.LAMPORTS_PER_SOL)).accounts({
+      payer:user.publicKey
+    }).signers([user]).rpc();
+
+    const vaultAcc = await program.account.vaultAccount.fetch(vaultPda);
+    const userAcc = await program.account.stakeAccount.fetch(userAccPda);
+
+    // console.log("Amount staked from vault: ",vaultAcc.totalStaked);
+    // console.log("Amount staked from user: ",userAcc.amount);
+    assert.equal(vaultAcc.totalStaked.toNumber(),5*anchor.web3.LAMPORTS_PER_SOL);
+    assert.equal(userAcc.amount.toNumber(),5*anchor.web3.LAMPORTS_PER_SOL);
+  })
+
+  it("Staked amount is 5 , so after 2 second accumulated reward must be 20",async()=>{
+
+    let userAcc = await program.account.stakeAccount.fetch(userAccPda);
+    const before = userAcc.pendingReward.toNumber();
+    console.log("Pending rewards before: ", userAcc.pendingReward.toString());
+    console.log("Amount staked: ", userAcc.amount.toString());
+
+    console.log("Waiting for 2s to pass.");
+    await (() => new Promise((r) => setTimeout(r,2000)))();
+
+    await program.methods.unstakeSol(new anchor.BN(2*anchor.web3.LAMPORTS_PER_SOL)).accounts({
+      payer: user.publicKey
+    }).signers([user]).rpc();
+    
+    userAcc = await program.account.stakeAccount.fetch(userAccPda);
+
+    // assert.equal(vaultAcc.totalStaked.toNumber(),5*anchor.web3.LAMPORTS_PER_SOL);
+    // assert.equal(userAcc.amount.toNumber(),5*anchor.web3.LAMPORTS_PER_SOL);
+    console.log("Pending rewards after: ", userAcc.pendingReward.toString());
+    const after = userAcc.pendingReward.toNumber();
+
+    assert.equal(after-before,20*anchor.web3.LAMPORTS_PER_SOL);
+  })
 });
